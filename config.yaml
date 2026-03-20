@@ -1,0 +1,137 @@
+# =============================================================================
+#  RAPTOR 6D Pose Estimation — Training Configuration
+#  Edit this file to change any training parameter.
+#  The Python training script (train.py) reads this file automatically.
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# PATHS  — update these to match your directory layout
+# -----------------------------------------------------------------------------
+paths:
+  csv_path:         "/home/spacets/data/computer_vision/raptor/poses.csv"
+  bbox_path:        "/home/spacets/data/computer_vision/raptor/bbox.csv"
+  img_dir:          "/home/spacets/data/computer_vision/raptor/camera_output/camera_output"
+  mask_dir:         "/home/spacets/data/computer_vision/raptor/masks/masks"   # set to null to disable masks
+  checkpoint_load:  "last_checkpoint.pth"   # set to null to start fresh
+  checkpoint_save:  "last_checkpoint.pth"
+  best_model_path:  "best_pose_model.pth"
+  log_dir:          "runs"                  # TensorBoard log directory
+
+
+# -----------------------------------------------------------------------------
+# DATASET
+# -----------------------------------------------------------------------------
+dataset:
+  img_size:     224       # Input resolution fed to the model (H = W).
+                          # 224 matches ResNet pre-training. Use 256/320 only
+                          # if you have headroom — VRAM cost scales quadratically.
+  max_samples:  null      # Limit dataset size (null = use all samples).
+  val_split:    0.8       # Fraction used for training; remainder goes to validation.
+  seed:         42        # Controls train/val split and weight init reproducibility.
+
+  # Data augmentation — each probability is applied independently per sample.
+  augmentation:
+    enabled:            true
+    # Geometric transforms can invalidate pose labels unless labels are updated.
+    # Keep rotation at 0 by default for stable supervised pose learning.
+    rotation_degrees:   0       # Max random rotation angle in degrees (0 = disabled)
+    brightness_jitter:  0.2     # ColorJitter brightness delta (0 = disabled)
+    contrast_jitter:    0.2     # ColorJitter contrast delta   (0 = disabled)
+    gaussian_blur:      0.2     # Probability of Gaussian blur
+
+
+# -----------------------------------------------------------------------------
+# MODEL
+# -----------------------------------------------------------------------------
+model:
+  backbone:   "resnet50"    # Options: resnet50 | resnet101 | efficientnet_b3 | efficientnet_b4
+                            #   resnet50      — fast, good baseline
+                            #   resnet101     — higher capacity, ~2× slower
+                            #   efficientnet_b3 — parameter-efficient, good for 224 input
+                            #   efficientnet_b4 — best accuracy at 380 input, more VRAM
+  pretrained: true          # Use ImageNet pre-trained weights (strongly recommended)
+  head_hidden: 512          # Hidden size of the MLP regression head (2048 → head_hidden → 7)
+  dropout:    0.3           # Dropout rate in the head (0 = disabled)
+  compile:    true          # torch.compile — ~20–30% speedup on RTX 40/50 series (PyTorch ≥ 2.0)
+
+
+# -----------------------------------------------------------------------------
+# LOSS
+# -----------------------------------------------------------------------------
+loss:
+  beta: 5.0     # Weight on rotation loss relative to translation MSE.
+                # Increase (e.g. 10.0) to prioritise orientation accuracy.
+                # Decrease (e.g. 1.0) if translation error is more critical.
+  trans_loss_type: "smooth_l1"  # smooth_l1 (robust) | mse
+
+
+# -----------------------------------------------------------------------------
+# TRAINING
+# -----------------------------------------------------------------------------
+training:
+  epochs:       50
+  batch_size:   32          # Safer default; increase gradually if VRAM allows.
+  accum_steps:  1           # Gradient accumulation steps.
+                            # Effective batch = batch_size × accum_steps.
+                            # Set to 2 or 4 to simulate larger batches without extra VRAM.
+  grad_clip:    1.0         # Max gradient norm. Prevents NaN/explosion crashes.
+  mixed_precision: true     # FP16 AMP — halves VRAM use, ~2× throughput on Tensor Cores.
+  skip_nonfinite_batches: true   # Skip NaN/Inf loss batches instead of crashing.
+  oom_skip_batches: true         # Skip occasional CUDA OOM batches and continue training.
+  matmul_precision: "high"       # highest | high | medium
+  allow_tf32: true               # Ampere+ speedup; generally safe for CV training.
+  cudnn_benchmark: true          # Faster fixed-size convolution workloads.
+  deterministic: false           # Set true for strict reproducibility (slower).
+
+
+# -----------------------------------------------------------------------------
+# OPTIMISER
+# -----------------------------------------------------------------------------
+optimiser:
+  name:         "adamw"     # Options: adamw | sgd | adam
+  lr:           1.0e-4      # Initial learning rate.
+  weight_decay: 1.0e-4      # L2 regularisation (helps prevent overfitting).
+  momentum:     0.9         # Used only when name = "sgd".
+  nesterov:     true        # Used only when name = "sgd".
+
+
+# -----------------------------------------------------------------------------
+# LEARNING-RATE SCHEDULER
+# -----------------------------------------------------------------------------
+scheduler:
+  name:         "cosine_warmup"   # Options:
+                                  #   cosine_warmup   — warmup then cosine anneal (recommended)
+                                  #   plateau         — reduce on validation plateau
+                                  #   step            — reduce by factor every N epochs
+                                  #   none            — constant LR
+
+  # cosine_warmup settings
+  warmup_epochs:  3         # Number of linear warm-up epochs
+  min_lr:         1.0e-6    # Minimum LR at end of cosine schedule
+
+  # plateau settings (used when name = "plateau")
+  patience:       3         # Epochs without improvement before reducing LR
+  factor:         0.5       # Multiplicative reduction factor
+
+  # step settings (used when name = "step")
+  step_size:      10        # Reduce every N epochs
+  gamma:          0.5       # Multiplicative reduction factor
+
+
+# -----------------------------------------------------------------------------
+# DATALOADER
+# -----------------------------------------------------------------------------
+dataloader:
+  num_workers:      4       # Conservative default to reduce worker-related instability.
+  prefetch_factor:  4       # Batches queued per worker ahead of GPU.
+  pin_memory:       true    # Faster host→GPU transfer (keep true for CUDA training).
+
+
+# -----------------------------------------------------------------------------
+# EARLY STOPPING
+# -----------------------------------------------------------------------------
+early_stopping:
+  enabled:    true
+  patience:   10            # Stop if val loss does not improve for this many epochs.
+  min_delta:  1.0e-5        # Minimum improvement to count as progress.
