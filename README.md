@@ -13,6 +13,6 @@ Model performance metrics
 
 Python
 
-Deep Learning (PyTorch / TensorFlow - update as per your code)
+Deep Learning (PyTorch / TensorFlow )
 
 Computer Vision
